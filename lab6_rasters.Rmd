@@ -1,0 +1,142 @@
+---
+title: "working with rasters in R"
+author: "Roshni Katrak-Adefowora"
+date: "2/13/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(raster) #loaded first because has function with same name as tidyverse and tidyverse one will be chosen
+library(tidyverse)
+library(here)
+library(sf)
+library(fasterize)
+```
+
+### check key for more details
+
+```{r}
+knitr::include_graphics("img/landsat.png")
+```
+
+### Load and inspect data
+```{r}
+landsat_file <- here("data/Landsat7.tif")
+
+ls_1 <- raster(landsat_file)
+ls_1
+```
+
+```{r}
+plot(ls_1)
+```
+
+```{r}
+ls_2 <- raster(landsat_file, band=2)
+ls_3 <- raster(landsat_file, band=3)
+ls_4 <- raster(landsat_file, band=4)
+
+ls_stack <- raster::stack(landsat_file)
+ls_stack
+```
+
+### Preparing the data
+```{r}
+#aggregate cells (to make bigger grid cells? Saves time with running other stuff)
+
+ls_1 <- raster::aggregate(ls_1, fact = 3, fun = mean) #take 3x3 grid to 1 cell and new cell has mean
+ls_2 <- raster::aggregate(ls_2, fact = 3, fun = mean)
+ls_3 <- raster::aggregate(ls_3, fact = 3, fun = mean)
+ls_4 <- raster::aggregate(ls_4, fact = 3, fun = mean)
+plot(ls_1, col = hcl.colors(n = 100, palette = 'Blues 2'))
+plot(ls_2, col = hcl.colors(n = 100, palette = 'Greens 2'))
+plot(ls_3, col = hcl.colors(n = 100, palette = 'Reds 2'))
+plot(ls_4, col = hcl.colors(n = 100, palette = 'Reds 2'))
+```
+
+```{r}
+sbc_rast <- raster(here("data/county.tif"))
+plot(sbc_rast)
+
+plot(ls_3)
+mask(ls_3, sbc_rast) %>% 
+  plot() #1 is land and NA is not land
+
+ls_3 <- mask(ls_3, sbc_rast)
+ls_4 <- mask(ls_4, sbc_rast)
+```
+
+### Raster algebra
+
+```{r}
+vec1 <- 1:5
+
+ls_3
+ls_3 * 2
+
+plot(ls_3); plot(log(ls_3))
+```
+
+```{r}
+vec2 <- 6:10
+vec1+vec2
+
+ls_3 + ls_4
+```
+
+### `raster::calc()`
+
+```{r}
+#put ls 1-4 all into one single object
+ls_stack <- stack(ls_1, ls_2, ls_3, ls_4)
+ls_mean <- raster::calc(ls_stack, fun=mean, na.rm=FALSE)
+
+plot(ls_mean)
+```
+
+##Analysis
+
+### NDVI
+```{r}
+knitr::include_graphics("img/spectrum.png")
+#absorb in blues and purples, reflects in greens and yellows
+```
+
+$$NDVI = \frac{NIR - Red}{NIR + Red}$$
+
+```{r}
+ndvi <- (ls_4 - ls_3)/(ls_4 + ls_3)
+
+plot(ndvi, col=hcl.colors(100, "Grays"))
+
+is_forest <- function(x) {
+  y <- ifelse(x >= 0.25, 1, NA) #if >= 0.25, return as 1, if not return as NA
+  return(y) 
+}
+
+forest <- calc(ndvi, fun = is_forest)
+
+plot(forest, col = "green")
+```
+
+### `ggplot` and rasters
+
+ggplot likes dataframes so need to convert raster to dataframe
+
+```{r}
+ndvi_df <- raster::rasterToPoints(ndvi) %>% #converts to matrix
+  as.data.frame() #convert to dataframe
+
+forest_df <- raster::rasterToPoints(forest) %>% 
+  as.data.frame()
+
+ggplot(data=ndvi_df, aes(x=x, y=y, fill=layer))+
+  geom_raster()+
+  geom_raster(data=forest_df, fill="green")+
+  coord_sf(expand=0)+ #tells it its a map so it doesnt stretch it weirdly
+  scale_fill_gradient(low="black", high="white")+
+  theme_void()+
+  theme(panel.background=element_rect(fill="slateblue4"))
+```
+
